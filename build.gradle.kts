@@ -7,7 +7,7 @@ plugins {
 configurations {
     create("shadow")
 
-    getByName("implementation").extendsFrom(getByName("shadow"))
+    getByName("compileOnly").extendsFrom(getByName("shadow"))
 }
 
 val gradleWrapperVersion: String by extra
@@ -32,8 +32,12 @@ repositories {
 
 dependencies {
     add("shadow", kotlin("stdlib-jdk8", kotlinVersion))
-    implementation("com.destroystokyo.paper:paper-api:$paperApiVersion")
-    implementation("com.comphenix.protocol:ProtocolLib-API:$protocollibApiVersion")
+    compileOnly("com.destroystokyo.paper:paper-api:$paperApiVersion") {
+        exclude(module = "*")
+    }
+    compileOnly("com.comphenix.protocol:ProtocolLib-API:$protocollibApiVersion") {
+        exclude(module = "*")
+    }
 }
 
 license {
