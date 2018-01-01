@@ -37,6 +37,8 @@ import org.bukkit.event.EventPriority.HIGH
 import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.plugin.java.JavaPlugin
+import org.bukkit.plugin.messaging.PluginMessageListener
+import java.nio.ByteBuffer
 import java.util.WeakHashMap
 import java.util.concurrent.ThreadLocalRandom
 
@@ -53,8 +55,10 @@ class Coordobfuscate: JavaPlugin(), Listener {
     private lateinit var adapter: CoordinateObfuscatingAdapter
 
     override fun onEnable() {
+        // Set up player join listener
         server.pluginManager.registerEvents(this, this)
 
+        // Set up packet listener
         val params = PacketAdapter.AdapterParameteters()
                 .plugin(this)
                 .listenerPriority(LOWEST)
@@ -75,6 +79,8 @@ class Coordobfuscate: JavaPlugin(), Listener {
 }
 
 private val coordobfuscate by lazy { JavaPlugin.getPlugin(Coordobfuscate::class.java) }
+private val serverBoundPluginMessage by lazy { PacketType.findCurrent(PacketType.Protocol.PLAY, PacketType.Sender.SERVER, 0x09) }
+private val clientBoundPluginMessage by lazy { PacketType.findCurrent(PacketType.Protocol.PLAY, PacketType.Sender.CLIENT, 0x18) }
 
 class CoordinateObfuscatingAdapter(params: AdapterParameteters): PacketAdapter(params) {
     override fun onPacketSending(event: PacketEvent) {
@@ -185,6 +191,57 @@ class CoordinateObfuscatingAdapter(params: AdapterParameteters): PacketAdapter(p
                     add(2, offset) // Z
                 }
             }
+            // Some vanilla plguin channels require modifications as well
+            clientBoundPluginMessage -> {
+                val channel = packet.strings.read(0)
+                val data = ByteBuffer.wrap(packet.byteArrays.read(0))
+                val rewrittenData = ByteBuffer.allocate(data.capacity())
+                when(channel) {
+                    //"MC|DebugPath" -> {}
+                    //"MC|DebugNeighborsUpdate" -> {}
+                    "WECUI" -> {
+                        val messages = ArrayList(data.asCharBuffer().toString().split("|", limit = 20))
+                        when(messages[0]) {
+                            "p" -> {
+                                if(messages.size == 6) {
+                                    val x = messages[2].toInt() + offset.toInt()
+                                    val z = messages[4].toInt() + offset.toInt()
+                                    messages[2] = "$x"
+                                    messages[4] = "$z"
+                                }
+                            }
+                            "e" -> {
+                                if(messages.size == 5) {
+                                    val x = messages[2].toInt() + offset.toInt()
+                                    val z = messages[4].toInt() + offset.toInt()
+                                    messages[2] = "$x"
+                                    messages[4] = "$z"
+                                }
+                            }
+                            "p2" -> {
+                                if(messages.size == 5) {
+                                    val x = messages[2].toInt() + offset.toInt()
+                                    val z = messages[3].toInt() + offset.toInt()
+                                    messages[2] = "$x"
+                                    messages[3] = "$z"
+                                }
+                            }
+                            "cyl" -> {
+                                if(messages.size == 6) {
+                                    val x = messages[1].toInt() + offset.toInt()
+                                    val z = messages[3].toInt() + offset.toInt()
+                                    messages[1] = "$x"
+                                    messages[3] = "$z"
+                                }
+                            }
+                        }
+                        rewrittenData.asCharBuffer().put(messages.joinToString(separator = "|"))
+                    }
+                }
+
+                if(rewrittenData.position() > 0)
+                    packet.byteArrays.write(0, rewrittenData.toByteArray())
+            }
         }
 
         // Replace packet
@@ -230,8 +287,39 @@ class CoordinateObfuscatingAdapter(params: AdapterParameteters): PacketAdapter(p
             PacketType.Play.Client.BLOCK_PLACE -> {
                 // TODO - 0x1F
             }
+            // Some vanilla plugin channels require modifications as well
+            serverBoundPluginMessage -> {
+                val channel = packet.strings.read(0)
+                val data = ByteBuffer.wrap(packet.byteArrays.read(0))
+                val rewrittenData = ByteBuffer.allocate(data.capacity())
 
+                when(channel) {
+                    "MC|AdvCmd" -> {
+                        if(data.get().toInt() == 0) {
+                            rewrittenData.put(0)
+                            rewrittenData.putInt(data.int + offset.toInt()) // X
+                            rewrittenData.putInt(data.int)
+                            rewrittenData.putInt(data.int + offset.toInt()) // Z
+                        } else {
+                            rewrittenData.put(1)
+                        }
+                        rewrittenData.put(data)
+                    }
+                    "MC|AutoCmd",
+                    "MC|Struct" -> {
+                        rewrittenData.putInt(data.int + offset.toInt()) // X
+                        rewrittenData.putInt(data.int) // Y
+                        rewrittenData.putInt(data.int + offset.toInt()) // Z
+                        rewrittenData.put(data)
+                    }
+                }
+
+                if(rewrittenData.position() > 0)
+                    packet.byteArrays.write(0, rewrittenData.toByteArray())
+            }
         }
+
+        event.packet = packet
     }
 }
 
@@ -242,3 +330,5 @@ private fun StructureModifier<Double>.add(fieldIndex: Int, value: Double): Unit 
 private fun StructureModifier<Float>.add(fieldIndex: Int, value: Float): Unit {
     write(fieldIndex, read(fieldIndex) + value)
 }
+
+private fun ByteBuffer.toByteArray(): ByteArray { rewind(); return ByteArray(this.capacity()).apply { get(this) } }
